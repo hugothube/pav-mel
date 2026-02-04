@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mes Déchets - MEL (Prototype)</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        :root {
+            --mel-blue: #004191;
+            --mel-light-blue: #e6eef7;
+            --green-ok: #27ae60;
+            --red-full: #e74c3c;
+            --text-dark: #333;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            color: var(--text-dark);
+        }
+
+        /* Header style MEL */
+        header {
+            background-color: var(--mel-blue);
+            color: white;
+            padding: 1rem;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+
+        header h1 { margin: 0; font-size: 1.2rem; text-transform: uppercase; letter-spacing: 1px; }
+
+        /* Contrôles */
+        #controls {
+            background: white;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            border-bottom: 2px solid var(--mel-light-blue);
+        }
+
+        select, button {
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            font-size: 1rem;
+        }
+
+        button {
+            background-color: var(--mel-blue);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+
+        button:hover { background-color: #002d66; }
+
+        /* Carte */
+        #map { flex-grow: 1; width: 100%; }
+
+        /* Infos bulles personnalisées */
+        .status-badge {
+            padding: 2px 8px;
+            border-radius: 10px;
+            color: white;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        .bg-green { background-color: var(--green-ok); }
+        .bg-red { background-color: var(--red-full); }
+
+        #loader {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255,255,255,0.9);
+            padding: 20px;
+            border-radius: 10px;
+            display: none;
+            z-index: 2000;
+            border: 2px solid var(--mel-blue);
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Mes Déchets - MEL</h1>
+</header>
+
+<div id="controls">
+    <label for="typeDechet">Quel déchet souhaitez-vous jeter ?</label>
+    <select id="typeDechet">
+        <option value="VERRE">Verre</option>
+        <option value="PAPIER">Papier / Carton</option>
+        <option value="TEXTILE">Textile</option>
+    </select>
+    <button onclick="trouverLePlusProche()">Trouver le point non-plein le plus proche</button>
+</div>
+
+<div id="loader">Chargement des données MEL...</div>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+    // 1. Initialisation de la carte sur Lille
+    const map = L.map('map').setView([50.6292, 3.0573], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    let allPavs = [];
+    const userPos = [50.6292, 3.0573]; // Simulation position utilisateur (Lille Centre)
+
+    // Ajouter un marqueur pour l'utilisateur
+    L.marker(userPos, {icon: L.divIcon({className: 'user-icon', html: '📍', iconSize: [30, 30]})})
+     .addTo(map).bindPopup("<b>Vous êtes ici</b>");
+
+    // 2. Fonction pour récupérer les données
+async function chargerDonnees() {
+        const loader = document.getElementById('loader');
+        loader.style.display = 'block';
+        
+        // On tente d'abord la requête DIRECTE (plus propre et rapide)
+        const urlDirecte = "https://data.lillemetropole.fr/api/records/1.0/search/?dataset=points-d-apport-volontaire-pav&rows=200";
+        // Si ça échoue, on tente avec un autre proxy
+        const urlProxy = "https://api.allorigins.win/get?url=" + encodeURIComponent(urlDirecte);
+
+        try {
+            console.log("Tentative de récupération directe...");
+            let response = await fetch(urlDirecte);
+            
+            if (!response.ok) throw new Error("Réponse réseau non OK");
+            
+            const data = await response.json();
+            traiterDonnees(data.records);
+            
+        } catch (err) {
+            console.warn("Échec du direct, tentative via Proxy de secours...", err);
+            try {
+                const responseProxy = await fetch(urlProxy);
+                const dataProxy = await responseProxy.json();
+                // AllOrigins encapsule la réponse dans un champ "contents"
+                const cleanData = JSON.parse(dataProxy.contents);
+                traiterDonnees(cleanData.records);
+            } catch (proxyErr) {
+                alert("Impossible de charger les données. Votre navigateur bloque peut-être les requêtes locales. Essayez avec Firefox ou un serveur local.");
+                console.error("Erreur critique :", proxyErr);
+            }
+        } finally {
+            loader.style.display = 'none';
+        }
+    }
+
+    // Petite fonction isolée pour traiter les données reçues
+    function traiterDonnees(records) {
+        allPavs = records.map(r => ({
+            adresse: r.fields.adresse,
+            commune: r.fields.commune,
+            flux: r.fields.flux,
+            coords: r.fields.geo_point_2d,
+            estPlein: Math.random() > 0.7 
+        }));
+        afficherMarkers(allPavs);
+        console.log("Données chargées avec succès :", allPavs.length, "points.");
+    }
+    // 3. Affichage sur la carte
+    function afficherMarkers(pavList) {
+        // Nettoyer les anciens markers si nécessaire
+        pavList.forEach(pav => {
+            const color = pav.estPlein ? 'red' : 'green';
+            const statusLabel = pav.estPlein ? 'PLEIN' : 'DISPONIBLE';
+            const badgeClass = pav.estPlein ? 'bg-red' : 'bg-green';
+
+            const marker = L.circleMarker(pav.coords, {
+                radius: 8,
+                fillColor: color,
+                color: "#fff",
+                weight: 2,
+                fillOpacity: 0.8
+            }).addTo(map);
+
+            marker.bindPopup(`
+                <b>${pav.flux}</b><br>
+                ${pav.adresse}, ${pav.commune}<br><br>
+                <span class="status-badge ${badgeClass}">${statusLabel}</span>
+            `);
+        });
+    }
+
+    // 4. Calcul de distance (Haversine)
+    function getDist(c1, c2) {
+        const R = 6371;
+        const dLat = (c2[0]-c1[0]) * Math.PI/180;
+        const dLon = (c2[1]-c1[1]) * Math.PI/180;
+        const a = Math.sin(dLat/2)**2 + Math.cos(c1[0]*Math.PI/180)*Math.cos(c2[0]*Math.PI/180)*Math.sin(dLon/2)**2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    // 5. Action du bouton
+    function trouverLePlusProche() {
+        const type = document.getElementById('typeDechet').value;
+        
+        const cibles = allPavs.filter(p => 
+            p.flux.toUpperCase().includes(type) && !p.estPlein
+        );
+
+        if (cibles.length === 0) {
+            alert("Désolé, tous les points pour ce déchet sont actuellement pleins à proximité.");
+            return;
+        }
+
+        // Tri par distance
+        cibles.sort((a, b) => getDist(userPos, a.coords) - getDist(userPos, b.coords));
+        
+        const lePlusProche = cibles[0];
+        map.flyTo(lePlusProche.coords, 16);
+        
+        // Notification
+        setTimeout(() => {
+            alert(`Le point de collecte de ${type} le plus proche est à ${(getDist(userPos, lePlusProche.coords)).toFixed(2)} km.\nStatut : DISPONIBLE`);
+        }, 500);
+    }
+
+    // Lancer le chargement au démarrage
+    chargerDonnees();
+
+</script>
+
+</body>
+</html>

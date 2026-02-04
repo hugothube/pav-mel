@@ -128,41 +128,46 @@
      .addTo(map).bindPopup("<b>Vous êtes ici</b>");
 
     // 2. Fonction pour récupérer les données
-async function chargerDonnees() {
-        const loader = document.getElementById('loader');
-        loader.style.display = 'block';
-        
-        // On tente d'abord la requête DIRECTE (plus propre et rapide)
-        const urlDirecte = "https://data.lillemetropole.fr/api/records/1.0/search/?dataset=points-d-apport-volontaire-pav&rows=200";
-        // Si ça échoue, on tente avec un autre proxy
-        const urlProxy = "https://api.allorigins.win/get?url=" + encodeURIComponent(urlDirecte);
+function chargerDonnees() {
+    const loader = document.getElementById('loader');
+    loader.style.display = 'block';
 
-        try {
-            console.log("Tentative de récupération directe...");
-            let response = await fetch(urlDirecte);
-            
-            if (!response.ok) throw new Error("Réponse réseau non OK");
-            
-            const data = await response.json();
-            traiterDonnees(data.records);
-            
-        } catch (err) {
-            console.warn("Échec du direct, tentative via Proxy de secours...", err);
-            try {
-                const responseProxy = await fetch(urlProxy);
-                const dataProxy = await responseProxy.json();
-                // AllOrigins encapsule la réponse dans un champ "contents"
-                const cleanData = JSON.parse(dataProxy.contents);
-                traiterDonnees(cleanData.records);
-            } catch (proxyErr) {
-                alert("Impossible de charger les données. Votre navigateur bloque peut-être les requêtes locales. Essayez avec Firefox ou un serveur local.");
-                console.error("Erreur critique :", proxyErr);
-            }
-        } finally {
-            loader.style.display = 'none';
-        }
-    }
+    // 1. On crée le nom d'une fonction temporaire qui recevra les données
+    const callbackName = 'callbackMEL_' + Math.round(Math.random() * 100000);
+    
+    // 2. On définit ce que cette fonction doit faire quand elle reçoit les données
+    window[callbackName] = function(data) {
+        console.log("✅ Données reçues via JSONP !");
+        traiterDonnees(data.records);
+        loader.style.display = 'none';
+        // On nettoie le script après usage
+        document.body.removeChild(document.getElementById('mel-script'));
+        delete window[callbackName];
+    };
 
+    // 3. On crée l'URL avec le paramètre &callback=
+    const url = `https://data.lillemetropole.fr/api/records/1.0/search/?dataset=points-d-apport-volontaire-pav&rows=200&callback=${callbackName}`;
+
+    // 4. On injecte un tag <script> pour charger les données (CORS ne bloque pas les scripts)
+    const script = document.createElement('script');
+    script.id = 'mel-script';
+    script.src = url;
+    
+    // En cas d'erreur de chargement (ex: serveur MEL en panne)
+    script.onerror = function() {
+        console.warn("⚠️ Échec JSONP, utilisation des données de secours.");
+        traiterDonnees(SECOURS_PAV);
+        loader.style.display = 'none';
+    };
+
+    document.body.appendChild(script);
+}
+
+// Données de secours (au cas où la MEL ne répondrait pas du tout)
+const SECOURS_PAV = [
+    { fields: { adresse: "Grand Place", commune: "LILLE", flux: "VERRE", geo_point_2d: [50.637, 3.063] } },
+    { fields: { adresse: "Gare Lille Flandres", commune: "LILLE", flux: "PAPIER", geo_point_2d: [50.636, 3.070] } }
+];
     // Petite fonction isolée pour traiter les données reçues
     function traiterDonnees(records) {
         allPavs = records.map(r => ({
@@ -239,4 +244,5 @@ async function chargerDonnees() {
 </script>
 
 </body>
+
 </html>

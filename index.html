@@ -3,246 +3,131 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mes Déchets - MEL (Prototype)</title>
-    
+    <title>PAV MEL - Scanner</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    
     <style>
-        :root {
-            --mel-blue: #004191;
-            --mel-light-blue: #e6eef7;
-            --green-ok: #27ae60;
-            --red-full: #e74c3c;
-            --text-dark: #333;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-            color: var(--text-dark);
-        }
-
-        /* Header style MEL */
-        header {
-            background-color: var(--mel-blue);
-            color: white;
-            padding: 1rem;
-            text-align: center;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            z-index: 1000;
-        }
-
-        header h1 { margin: 0; font-size: 1.2rem; text-transform: uppercase; letter-spacing: 1px; }
-
-        /* Contrôles */
-        #controls {
-            background: white;
-            padding: 15px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            border-bottom: 2px solid var(--mel-light-blue);
-        }
-
-        select, button {
-            padding: 12px;
-            border-radius: 8px;
-            border: 1px solid #ccc;
-            font-size: 1rem;
-        }
-
-        button {
-            background-color: var(--mel-blue);
-            color: white;
-            border: none;
-            cursor: pointer;
-            font-weight: bold;
-            transition: background 0.3s;
-        }
-
-        button:hover { background-color: #002d66; }
-
-        /* Carte */
-        #map { flex-grow: 1; width: 100%; }
-
-        /* Infos bulles personnalisées */
-        .status-badge {
-            padding: 2px 8px;
-            border-radius: 10px;
-            color: white;
-            font-size: 0.8rem;
-            font-weight: bold;
-        }
-        .bg-green { background-color: var(--green-ok); }
-        .bg-red { background-color: var(--red-full); }
-
-        #loader {
-            position: fixed;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(255,255,255,0.9);
-            padding: 20px;
-            border-radius: 10px;
-            display: none;
-            z-index: 2000;
-            border: 2px solid var(--mel-blue);
-        }
+        :root { --mel-blue: #004191; --green: #27ae60; --red: #e74c3c; }
+        body { font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        header { background: var(--mel-blue); color: white; padding: 10px; text-align: center; font-weight: bold; }
+        #controls { padding: 15px; border-bottom: 2px solid #ddd; background: #f9f9f9; display: flex; flex-direction: column; gap: 10px; }
+        #map { flex-grow: 1; }
+        button { background: var(--mel-blue); color: white; border: none; padding: 12px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        #debug-box { position: fixed; bottom: 10px; left: 10px; right: 10px; background: rgba(0,0,0,0.8); color: #0f0; padding: 10px; font-family: monospace; font-size: 10px; max-height: 100px; overflow-y: auto; z-index: 2000; display: none; }
+        .status-pill { padding: 2px 6px; border-radius: 10px; color: white; font-size: 0.7rem; }
     </style>
 </head>
 <body>
 
-<header>
-    <h1>Mes Déchets - MEL</h1>
-</header>
+<header>PROJET MEL - GESTION DES DÉCHETS</header>
 
 <div id="controls">
-    <label for="typeDechet">Quel déchet souhaitez-vous jeter ?</label>
+    <label>Déchet à recycler :</label>
     <select id="typeDechet">
         <option value="VERRE">Verre</option>
         <option value="PAPIER">Papier / Carton</option>
         <option value="TEXTILE">Textile</option>
     </select>
-    <button onclick="trouverLePlusProche()">Trouver le point non-plein le plus proche</button>
+    <button onclick="trouverLePlusProche()">Trouver le point disponible le plus proche</button>
 </div>
 
-<div id="loader">Chargement des données MEL...</div>
 <div id="map"></div>
+<div id="debug-box" id="debug"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-    // 1. Initialisation de la carte sur Lille
-    const map = L.map('map').setView([50.6292, 3.0573], 13);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
+    const debug = (msg) => {
+        const box = document.getElementById('debug-box');
+        box.style.display = 'block';
+        box.innerHTML += `> ${msg}<br>`;
+        console.log(msg);
+    };
+
+    // Configuration
+    const API_URL = "https://data.lillemetropole.fr/api/explore/v2.1/catalog/datasets/points-d-apport-volontaire-pav/records?limit=100";
+    const PROXY = "https://api.allorigins.win/raw?url=";
+    
+    const map = L.map('map').setView([50.63, 3.06], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
     let allPavs = [];
-    const userPos = [50.6292, 3.0573]; // Simulation position utilisateur (Lille Centre)
+    const userPos = [50.633, 3.060]; // Simulation Lille Centre
 
-    // Ajouter un marqueur pour l'utilisateur
-    L.marker(userPos, {icon: L.divIcon({className: 'user-icon', html: '📍', iconSize: [30, 30]})})
-     .addTo(map).bindPopup("<b>Vous êtes ici</b>");
+    // Marqueur utilisateur
+    L.marker(userPos).addTo(map).bindPopup("<b>Ma position</b>");
 
-    // 2. Fonction pour récupérer les données
-function chargerDonnees() {
-    const loader = document.getElementById('loader');
-    loader.style.display = 'block';
+    async function chargerDonnees() {
+        debug("Tentative de chargement via Proxy Raw...");
+        try {
+            const response = await fetch(PROXY + encodeURIComponent(API_URL));
+            
+            if (!response.ok) throw new Error("Réponse serveur : " + response.status);
+            
+            const data = await response.json();
+            // Dans l'API v2.1, les données sont dans 'results'
+            const records = data.results || data.records; 
+            
+            if (!records) throw new Error("Format de données inconnu");
 
-    // 1. On crée le nom d'une fonction temporaire qui recevra les données
-    const callbackName = 'callbackMEL_' + Math.round(Math.random() * 100000);
-    
-    // 2. On définit ce que cette fonction doit faire quand elle reçoit les données
-    window[callbackName] = function(data) {
-        console.log("✅ Données reçues via JSONP !");
-        traiterDonnees(data.records);
-        loader.style.display = 'none';
-        // On nettoie le script après usage
-        document.body.removeChild(document.getElementById('mel-script'));
-        delete window[callbackName];
-    };
+            allPavs = records.map(r => ({
+                adresse: r.adresse || r.fields?.adresse,
+                flux: r.flux || r.fields?.flux,
+                coords: r.geo_point_2d || r.fields?.geo_point_2d,
+                estPlein: Math.random() > 0.7 // Simulation
+            }));
 
-    // 3. On crée l'URL avec le paramètre &callback=
-    const url = `https://data.lillemetropole.fr/api/records/1.0/search/?dataset=points-d-apport-volontaire-pav&rows=200&callback=${callbackName}`;
-
-    // 4. On injecte un tag <script> pour charger les données (CORS ne bloque pas les scripts)
-    const script = document.createElement('script');
-    script.id = 'mel-script';
-    script.src = url;
-    
-    // En cas d'erreur de chargement (ex: serveur MEL en panne)
-    script.onerror = function() {
-        console.warn("⚠️ Échec JSONP, utilisation des données de secours.");
-        traiterDonnees(SECOURS_PAV);
-        loader.style.display = 'none';
-    };
-
-    document.body.appendChild(script);
-}
-
-// Données de secours (au cas où la MEL ne répondrait pas du tout)
-const SECOURS_PAV = [
-    { fields: { adresse: "Grand Place", commune: "LILLE", flux: "VERRE", geo_point_2d: [50.637, 3.063] } },
-    { fields: { adresse: "Gare Lille Flandres", commune: "LILLE", flux: "PAPIER", geo_point_2d: [50.636, 3.070] } }
-];
-    // Petite fonction isolée pour traiter les données reçues
-    function traiterDonnees(records) {
-        allPavs = records.map(r => ({
-            adresse: r.fields.adresse,
-            commune: r.fields.commune,
-            flux: r.fields.flux,
-            coords: r.fields.geo_point_2d,
-            estPlein: Math.random() > 0.7 
-        }));
-        afficherMarkers(allPavs);
-        console.log("Données chargées avec succès :", allPavs.length, "points.");
+            debug(`Succès : ${allPavs.length} points chargés.`);
+            afficherMarkers();
+        } catch (err) {
+            debug("ERREUR : " + err.message);
+            chargerDonneesDeSecours();
+        }
     }
-    // 3. Affichage sur la carte
-    function afficherMarkers(pavList) {
-        // Nettoyer les anciens markers si nécessaire
-        pavList.forEach(pav => {
-            const color = pav.estPlein ? 'red' : 'green';
-            const statusLabel = pav.estPlein ? 'PLEIN' : 'DISPONIBLE';
-            const badgeClass = pav.estPlein ? 'bg-red' : 'bg-green';
 
-            const marker = L.circleMarker(pav.coords, {
-                radius: 8,
-                fillColor: color,
-                color: "#fff",
-                weight: 2,
-                fillOpacity: 0.8
-            }).addTo(map);
+    function chargerDonneesDeSecours() {
+        debug("Chargement des données de secours locales...");
+        allPavs = [
+            { adresse: "Grand Place", flux: "VERRE", coords: [50.637, 3.063], estPlein: false },
+            { adresse: "Rue Nationale", flux: "PAPIER", coords: [50.635, 3.058], estPlein: true },
+            { adresse: "Gare Flandres", flux: "VERRE", coords: [50.636, 3.070], estPlein: false }
+        ];
+        afficherMarkers();
+    }
 
-            marker.bindPopup(`
-                <b>${pav.flux}</b><br>
-                ${pav.adresse}, ${pav.commune}<br><br>
-                <span class="status-badge ${badgeClass}">${statusLabel}</span>
+    function afficherMarkers() {
+        allPavs.forEach(pav => {
+            const color = pav.estPlein ? '#e74c3c' : '#27ae60';
+            L.circleMarker(pav.coords, {
+                radius: 8, fillColor: color, color: "#fff", weight: 2, fillOpacity: 0.9
+            }).addTo(map).bindPopup(`
+                <b>${pav.flux}</b><br>${pav.adresse}<br>
+                <span style="color:${color}">● ${pav.estPlein ? 'PLEIN' : 'DISPONIBLE'}</span>
             `);
         });
     }
 
-    // 4. Calcul de distance (Haversine)
-    function getDist(c1, c2) {
-        const R = 6371;
-        const dLat = (c2[0]-c1[0]) * Math.PI/180;
-        const dLon = (c2[1]-c1[1]) * Math.PI/180;
-        const a = Math.sin(dLat/2)**2 + Math.cos(c1[0]*Math.PI/180)*Math.cos(c2[0]*Math.PI/180)*Math.sin(dLon/2)**2;
-        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    }
-
-    // 5. Action du bouton
     function trouverLePlusProche() {
         const type = document.getElementById('typeDechet').value;
-        
-        const cibles = allPavs.filter(p => 
-            p.flux.toUpperCase().includes(type) && !p.estPlein
-        );
+        const dispos = allPavs.filter(p => p.flux.includes(type) && !p.estPlein);
 
-        if (cibles.length === 0) {
-            alert("Désolé, tous les points pour ce déchet sont actuellement pleins à proximité.");
+        if (dispos.length === 0) {
+            alert("Aucun point disponible pour ce type.");
             return;
         }
 
-        // Tri par distance
-        cibles.sort((a, b) => getDist(userPos, a.coords) - getDist(userPos, b.coords));
-        
-        const lePlusProche = cibles[0];
-        map.flyTo(lePlusProche.coords, 16);
-        
-        // Notification
-        setTimeout(() => {
-            alert(`Le point de collecte de ${type} le plus proche est à ${(getDist(userPos, lePlusProche.coords)).toFixed(2)} km.\nStatut : DISPONIBLE`);
-        }, 500);
+        dispos.sort((a, b) => {
+            const d1 = Math.hypot(a.coords[0]-userPos[0], a.coords[1]-userPos[1]);
+            const d2 = Math.hypot(b.coords[0]-userPos[0], b.coords[1]-userPos[1]);
+            return d1 - d2;
+        });
+
+        const cible = dispos[0];
+        map.flyTo(cible.coords, 16);
+        debug(`Navigation vers : ${cible.adresse}`);
     }
 
-    // Lancer le chargement au démarrage
-    chargerDonnees();
-
+    window.onload = chargerDonnees;
 </script>
 
 </body>
-
 </html>
